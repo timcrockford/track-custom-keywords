@@ -9,6 +9,9 @@
      Author URI: http://codearoundcorners.com/
      */
     
+    // These are the YOURLS actions and filters that this plugin extends.
+    yourls_add_action( 'activated_track-custom-keywords/plugin.php', 'tck_activate' );
+    yourls_add_action( 'deactivated_track-custom-keywords/plugin.php', 'tck_deactivate' );
     yourls_add_action( 'post_add_new_link', 'tck_insert_link' );
     yourls_add_filter( 'random_keyword', 'tck_add_random' );
     yourls_add_filter( 'custom_keyword', 'tck_add_custom' );
@@ -18,12 +21,35 @@
     yourls_add_filter( 'get_shorturl_charset', 'tck_get_shorturl_charset' );
     yourls_add_filter( 'rnd_string', 'tck_rnd_string' );
     yourls_add_filter( 'edit_link', 'tck_edit_link' );
-
+    yourls_add_filter( 'table_head_cells', 'tck_table_head_cells' );
+    yourls_add_action( 'html_footer', 'tck_jquery_on_load' );
+    yourls_add_filter( 'table_edit_row', 'tck_table_edit_row' );
+    
     // This is where we define the prefix characters we will use to indicate a random
     // or custom keyword. It's important these characters are not part of your usual
     // YOURLS character set.
-    define("TCK_DEFAULT_RANDOM_PREFIX", "@");
-    define("TCK_DEFAULT_CUSTOM_PREFIX", "#");
+    define("TCK_DEFAULT_RANDOM_PREFIX", "^");
+    define("TCK_DEFAULT_CUSTOM_PREFIX", "%");
+    define("TCK_COLUMN", "tck_custom");
+    
+    // This function amends the database when the plugin is activated.
+    function tck_activate($args) {
+        global $ydb;
+        $table = YOURLS_DB_TABLE_URL;
+        
+        $sql = 'Alter Table `' . $table . '` Add Column `' . TCK_COLUMN . '` TINYINT(1) Default 0 After clicks';
+        $ydb->query($sql);
+    }
+    
+    // This function amends the database to remove the added column when deactivated.
+    // Be warned this will wipe your custom flags.
+    function tck_deactivate($args) {
+        global $ydb;
+        $table = YOURLS_DB_TABLE_URL;
+        
+        $sql = 'Alter Table `' . $table . '` Drop Column `' . TCK_COLUMN . '`;';
+        $ydb->query($sql);
+    }
     
     // These functions get the current prefixs stored in the database, or grab the default
     // one if there isn't one registered.
@@ -52,21 +78,10 @@
     // This function overrides the standard insert link routine to add the column for
     // custom keyword checking, and will update the inserted keyword with the appropriate
     // data.
-    function tck_insert_link( $args ) {
+    function tck_insert_link($args) {
         global $ydb;
         $keyword = $args[1];
         $table = YOURLS_DB_TABLE_URL;
-        
-        // We check the YOURLS option table to see if the necessary column has been added
-        // to the database.
-        $init = 1;
-        if ( yourls_get_option('tck_column_added') === false ) $init = 0;
-        
-        if ( $init == 0 ) {
-            $sql = 'Alter Table ' . $table . ' Add Column custom TINYINT(1) Default 0 After clicks';
-            $ydb->query($sql);
-            yourls_add_option('tck_column_added', 1);
-        }
         
         // Next we update the keyword based on the prefix.
         $prefix = substr($keyword, 0, 1);
@@ -77,7 +92,7 @@
         if ( $prefix == tck_get_prefix(1) ) $custom = 1;
         
         $sql = 'Update ' . $table . ' Set `keyword` = \'' . $fkeyword . '\', ';
-        $sql .= '`custom` = ' . $custom . ' Where `keyword` = \'' . $keyword . '\';';
+        $sql .= '`' . TCK_COLUMN . '` = ' . $custom . ' Where `keyword` = \'' . $keyword . '\';';
 
         $ydb->query($sql);
     }
@@ -126,13 +141,18 @@
         $fkeyword = tck_get_keyword($keyword);
         
         if ( $fkeyword != $keyword ) {
-            $shorturl = yourls_link( $fkeyword );
+            $shorturl = yourls_link($fkeyword);
             $cells['keyword']['shorturl'] = yourls_esc_url($shorturl);
             $cells['keyword']['keyword_html'] = yourls_esc_html( $fkeyword );
             $cells['actions']['keyword'] = $fkeyword;
         }
         
-        return $cells;
+        $newcells['custom']['template'] = '%custom%';
+        $newcells['custom']['custom'] = (tck_is_custom_keyword($fkeyword) ? 'Yes' : 'No');
+        $newcells['actions'] = $cells['actions'];
+
+        unset($cells['actions']);
+        return array_merge($cells, $newcells);
     }
     
     // This function adds the prefixs as valid characters so they're not stripped out of
@@ -170,13 +190,68 @@
     // This function adds an additional check to the edit link function to update the
     // custom flag to 1 if the old and new keywords are different.
     function tck_edit_link($return, $url, $keyword, $newkeyword, $title, $new_url_already_there, $keyword_is_ok) {
-        if ( $return['status'] == 'success' && $keyword != $newkeyword ) {
-            global $ydb;
-            $table = YOURLS_DB_TABLE_URL;
-
-            $sql = 'Update ' . $table . ' Set `custom` = 1 Where `keyword` = \'' . $newkeyword . '\';';
-            $ydb->query($sql);
+        $custom = isset($_REQUEST['custom']);
+        
+        global $ydb;
+        $table = YOURLS_DB_TABLE_URL;
+        $sql = '';
+        
+        if ( $return['status'] == 'success' && $keyword != $newkeyword && ! $custom ) {
+            $sql = 'Update ' . $table . ' Set `' . TCK_COLUMN . '` = 1 Where `keyword` = \'' . $newkeyword . '\';';
+        } else {
+            $sql = 'Update ' . $table . ' Set `' . TCK_COLUMN . '` = ' . ($custom ? 1 : 0) . ' Where `keyword` = \'' . $newkeyword . '\';';
         }
+
+        if ( $sql != '' ) $ydb->query($sql);
+
+        return $return;
+    }
+    
+    // This function adds the column for the custom indicator to the table headings.
+    function tck_table_head_cells($cells) {
+        $newcells['custom'] = yourls__('Custom Keyword');
+        $newcells['actions'] = $cells['actions'];
+        
+        unset($cells['actions']);
+        return array_merge($cells, $newcells);
+    }
+    
+    // This function returns true if the specified keyword is a custom keyword.
+    function tck_is_custom_keyword($keyword) {
+        global $ydb;
+        $table = YOURLS_DB_TABLE_URL;
+
+        $is_custom = $ydb->get_row("SELECT " . TCK_COLUMN . " As custom FROM `$table` WHERE `keyword` = '" . $keyword . "';");
+        return ($is_custom->custom == 1);
+    }
+    
+    // This function registers some jQuery to override some of the non-hooked
+    // functionality.
+    function tck_jquery_on_load() {
+    ?>
+    <script language="javascript">
+        $(document).ready(function(){
+            $("#main_table").find("tfoot").find("tr").find("th").attr('colspan', 7);
+            $("#main_table_head_custom").removeClass("sorter-false");
+            $("#main_table_head_custom")[0].sortDisabled = false;
+            $("#main_table_head_actions").addClass("sorter-false")[0].sortDisabled = true;
+            $("#main_table").trigger("update");
+        });
+    </script>
+    <?php
+    }
+        
+    // This function increases the column span to allow for the extra column.
+    function tck_table_edit_row($return, $keyword, $url, $title) {
+        $id = yourls_string2htmlid( $keyword );
+        
+        $return = str_replace('colspan="6"', 'colspan="7"', $return);
+        $return = str_replace('colspan="5"', 'colspan="6"', $return);
+        
+        $checked = '';
+        if ( tck_is_custom_keyword($keyword) ) $checked = ' checked';
+        
+        $return = str_replace('</td><td', '<br /><strong>Custom Keyword</strong>: <input type="checkbox" id="edit-custom-$id" name="edit-custom-$id"' . $checked . ' /></td><td', $return);
         
         return $return;
     }
