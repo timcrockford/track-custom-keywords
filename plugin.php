@@ -20,10 +20,12 @@
     yourls_add_filter( 'table_add_row_cell_array', 'tck_table_add_row_cell_array' );
     yourls_add_filter( 'get_shorturl_charset', 'tck_get_shorturl_charset' );
     yourls_add_filter( 'rnd_string', 'tck_rnd_string' );
-    yourls_add_filter( 'edit_link', 'tck_edit_link' );
+    yourls_add_filter( 'shunt_edit_link', 'tck_yourls_edit_link' );
     yourls_add_filter( 'table_head_cells', 'tck_table_head_cells' );
     yourls_add_action( 'html_footer', 'tck_jquery_on_load' );
     yourls_add_filter( 'table_edit_row', 'tck_table_edit_row' );
+    yourls_add_action( 'yourls_ajax_edit_save_custom', 'tck_yourls_ajax_edit_save_custom' );
+    yourls_add_action( 'html_head', 'tck_custom_js' );
     
     // This is where we define the prefix characters we will use to indicate a random
     // or custom keyword. It's important these characters are not part of your usual
@@ -190,7 +192,11 @@
     // This function adds an additional check to the edit link function to update the
     // custom flag to 1 if the old and new keywords are different.
     function tck_edit_link($return, $url, $keyword, $newkeyword, $title, $new_url_already_there, $keyword_is_ok) {
-        $custom = isset($_REQUEST['custom']);
+        $prefix = substr($newkeyword, 0, 1);
+        $newkeyword = substr($newkeyword, 1, strlen($newkeyword) - 1);
+        
+        if ( $prefix == tck_get_prefix(0) ) $custom = 0;
+        if ( $prefix == tck_get_prefix(1) ) $custom = 1;
         
         global $ydb;
         $table = YOURLS_DB_TABLE_URL;
@@ -203,6 +209,8 @@
         }
 
         if ( $sql != '' ) $ydb->query($sql);
+        
+        $return['message'] = $sql;
 
         return $return;
     }
@@ -251,8 +259,118 @@
         $checked = '';
         if ( tck_is_custom_keyword($keyword) ) $checked = ' checked';
         
-        $return = str_replace('</td><td', '<br /><strong>Custom Keyword</strong>: <input type="checkbox" id="edit-custom-$id" name="edit-custom-$id"' . $checked . ' /></td><td', $return);
+        $return = str_replace('</td><td', '<br /><strong>Custom Keyword</strong>: <input type="checkbox" id="edit-custom-' . $id . '" name="edit-custom-' . $id . '"' . $checked . ' /></td><td', $return);
+        $return = str_replace('edit_link_save', 'edit_link_save_custom', $return);
         
         return $return;
+    }
+        
+    function tck_yourls_ajax_edit_save_custom($args) {
+		yourls_verify_nonce( 'edit-save_'.$_REQUEST['id'], $_REQUEST['nonce'], false, 'omg error' );
+        
+		$return = tck_yourls_edit_link( $_REQUEST['url'], $_REQUEST['keyword'], $_REQUEST['newkeyword'], $_REQUEST['title'], $_REQUEST['custom'] );
+		echo json_encode($return);
+    }
+        
+    function tck_yourls_edit_link( $url, $keyword, $newkeyword='', $title='', $custom = 0 ) {
+        global $ydb;
+
+        $table = YOURLS_DB_TABLE_URL;
+        $url = yourls_escape (yourls_sanitize_url( $url ) );
+        $keyword = yourls_escape( yourls_sanitize_string( $keyword ) );
+        $title = yourls_escape( yourls_sanitize_title( $title ) );
+        $newkeyword = yourls_escape( yourls_sanitize_string( $newkeyword ) );
+        $strip_url = stripslashes( $url );
+        $strip_title = stripslashes( $title );
+        $old_url = $ydb->get_var( "SELECT `url`, `" . TCK_COLUMN . "` As custom FROM `$table` WHERE `keyword` = '$keyword';" );
+
+        // Check if new URL is not here already
+        if ( $old_url != $url && !yourls_allow_duplicate_longurls() ) {
+            $new_url_already_there = intval($ydb->get_var("SELECT COUNT(keyword) FROM `$table` WHERE `url` = '$url';"));
+        } else {
+            $new_url_already_there = false;
+        }
+
+        // Check if the new keyword is not here already
+        if ( $newkeyword != $keyword ) {
+            $keyword_is_ok = yourls_keyword_is_free( $newkeyword );
+        } else {
+            $keyword_is_ok = true;
+        }
+
+        // Check if we're changing the custom flag.
+        $new_custom = false;
+        if ( $custom != $old_url->custom ) {
+            $new_custom = true;
+        }
+        
+        yourls_do_action( 'pre_edit_link', $url, $keyword, $newkeyword, $new_url_already_there, $keyword_is_ok );
+
+        // All clear, update
+        if ( ( !$new_url_already_there || yourls_allow_duplicate_longurls() || $new_custom ) && $keyword_is_ok ) {
+            $sql = "UPDATE `$table` SET `url` = '$url', `keyword` = '$newkeyword', `title` = '$title', `" . TCK_COLUMN . "` = " . $custom . " WHERE `keyword` = '$keyword';";
+            $update_url = $ydb->query($sql);
+            
+            if( $update_url ) {
+                $return['url']     = array( 'keyword' => $newkeyword, 'shorturl' => YOURLS_SITE.'/'.$newkeyword, 'url' => $strip_url, 'display_url' => yourls_trim_long_string( $strip_url ), 'title' => $strip_title, 'display_title' => yourls_trim_long_string( $strip_title ), 'custom' => ($custom == 1 ? 'Yes' : 'No') );
+                $return['status']  = 'success';
+                $return['message'] = yourls__( 'Link updated in database' );
+            } else {
+                $return['status']  = 'fail';
+                $return['message'] = /* //translators: "Error updating http://someurl/ (Shorturl: http://sho.rt/blah)" */ yourls_s( 'Error updating %s (Short URL: %s) - SQL: %s', yourls_trim_long_string( $strip_url ), $keyword, $sql ) ;
+            }
+
+        // Nope
+        } else {
+            $return['status']  = 'fail';
+            $return['message'] = yourls__( 'URL or keyword already exists in database' );
+        }
+
+        return yourls_apply_filter( 'edit_link', $return, $url, $keyword, $newkeyword, $title, $new_url_already_there, $keyword_is_ok );
+    }
+
+    function tck_custom_js() {
+?>
+<script>
+function edit_link_save_custom(id) {
+	add_loading("#edit-close-" + id);
+	var newurl = encodeURI( $("#edit-url-" + id).val() );
+	var newkeyword = $("#edit-keyword-" + id).val();
+	var title = $("#edit-title-" + id).val();
+	var custom = ($("#edit-custom-" + id).is(':checked') ? 1 : 0);
+	var keyword = $('#old_keyword_'+id).val();
+	var nonce = $('#nonce_'+id).val();
+	var www = $('#yourls-site').val();
+
+	$.getJSON(
+        ajaxurl,
+            {action:'edit_save_custom', url: newurl, id: id, keyword: keyword, newkeyword: newkeyword, title: title, custom: custom, nonce: nonce },
+        function(data){
+            if(data.status == 'success') {
+
+                if( data.url.title != '' ) {
+                    var display_link = '<a href="' + data.url.url + '" title="' + data.url.url + '">' + data.url.display_title + '</a><br/><small><a href="' + data.url.url + '">' + data.url.display_url + '</a></small>';
+                } else {
+                    var display_link = '<a href="' + data.url.url + '" title="' + data.url.url + '">' + data.url.display_url + '</a>';
+                }
+
+                $("#url-" + id).html(display_link);
+                $("#keyword-" + id).html('<a href="' + data.url.shorturl + '" title="' + data.url.shorturl + '">' + data.url.keyword + '</a>');
+                $("#timestamp-" + id).html(data.url.date);
+                $("#edit-" + id).fadeOut(200, function(){
+                    $('#main_table tbody').trigger("update");
+                });
+                $('#keyword-'+id).val( newkeyword );
+                $('#custom-'+id).html( data.url.custom );
+                $('#statlink-'+id).attr( 'href', data.url.shorturl+'+' );
+            }
+            feedback(data.message, data.status);
+            end_loading("#edit-close-" + id);
+            end_disable("#actions-" + id + ' .button');
+        }
+    );
+}
+</script>
+<?php
     }
 ?>
