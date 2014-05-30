@@ -22,10 +22,12 @@
     yourls_add_filter( 'rnd_string', 'tck_rnd_string' );
     yourls_add_filter( 'shunt_edit_link', 'tck_yourls_edit_link' );
     yourls_add_filter( 'table_head_cells', 'tck_table_head_cells' );
+    yourls_add_filter( 'html_tfooter', 'tck_add_search_options' );
     yourls_add_action( 'html_footer', 'tck_jquery_on_load' );
     yourls_add_filter( 'table_edit_row', 'tck_table_edit_row' );
     yourls_add_action( 'yourls_ajax_edit_save_custom', 'tck_yourls_ajax_edit_save_custom' );
     yourls_add_action( 'html_head', 'tck_custom_js' );
+    yourls_add_filter( 'admin_list_where', 'tck_admin_list_where' );
     
     // This is where we define the prefix characters we will use to indicate a random
     // or custom keyword. It's important these characters are not part of your usual
@@ -331,46 +333,79 @@
 
     function tck_custom_js() {
 ?>
-<script>
-function edit_link_save_custom(id) {
-	add_loading("#edit-close-" + id);
-	var newurl = encodeURI( $("#edit-url-" + id).val() );
-	var newkeyword = $("#edit-keyword-" + id).val();
-	var title = $("#edit-title-" + id).val();
-	var custom = ($("#edit-custom-" + id).is(':checked') ? 1 : 0);
-	var keyword = $('#old_keyword_'+id).val();
-	var nonce = $('#nonce_'+id).val();
-	var www = $('#yourls-site').val();
+    <script language="javascript">
+    function edit_link_save_custom(id) {
+        add_loading("#edit-close-" + id);
+        var newurl = encodeURI( $("#edit-url-" + id).val() );
+        var newkeyword = $("#edit-keyword-" + id).val();
+        var title = $("#edit-title-" + id).val();
+        var custom = ($("#edit-custom-" + id).is(':checked') ? 1 : 0);
+        var keyword = $('#old_keyword_'+id).val();
+        var nonce = $('#nonce_'+id).val();
+        var www = $('#yourls-site').val();
 
-	$.getJSON(
-        ajaxurl,
-            {action:'edit_save_custom', url: newurl, id: id, keyword: keyword, newkeyword: newkeyword, title: title, custom: custom, nonce: nonce },
-        function(data){
-            if(data.status == 'success') {
+        $.getJSON(
+            ajaxurl,
+                {action:'edit_save_custom', url: newurl, id: id, keyword: keyword, newkeyword: newkeyword, title: title, custom: custom, nonce: nonce },
+            function(data){
+                if(data.status == 'success') {
 
-                if( data.url.title != '' ) {
-                    var display_link = '<a href="' + data.url.url + '" title="' + data.url.url + '">' + data.url.display_title + '</a><br/><small><a href="' + data.url.url + '">' + data.url.display_url + '</a></small>';
-                } else {
-                    var display_link = '<a href="' + data.url.url + '" title="' + data.url.url + '">' + data.url.display_url + '</a>';
+                    if( data.url.title != '' ) {
+                        var display_link = '<a href="' + data.url.url + '" title="' + data.url.url + '">' + data.url.display_title + '</a><br/><small><a href="' + data.url.url + '">' + data.url.display_url + '</a></small>';
+                    } else {
+                        var display_link = '<a href="' + data.url.url + '" title="' + data.url.url + '">' + data.url.display_url + '</a>';
+                    }
+
+                    $("#url-" + id).html(display_link);
+                    $("#keyword-" + id).html('<a href="' + data.url.shorturl + '" title="' + data.url.shorturl + '">' + data.url.keyword + '</a>');
+                    $("#timestamp-" + id).html(data.url.date);
+                    $("#edit-" + id).fadeOut(200, function(){
+                        $('#main_table tbody').trigger("update");
+                    });
+                    $('#keyword-'+id).val( newkeyword );
+                    $('#custom-'+id).html( data.url.custom );
+                    $('#statlink-'+id).attr( 'href', data.url.shorturl+'+' );
                 }
-
-                $("#url-" + id).html(display_link);
-                $("#keyword-" + id).html('<a href="' + data.url.shorturl + '" title="' + data.url.shorturl + '">' + data.url.keyword + '</a>');
-                $("#timestamp-" + id).html(data.url.date);
-                $("#edit-" + id).fadeOut(200, function(){
-                    $('#main_table tbody').trigger("update");
-                });
-                $('#keyword-'+id).val( newkeyword );
-                $('#custom-'+id).html( data.url.custom );
-                $('#statlink-'+id).attr( 'href', data.url.shorturl+'+' );
+                feedback(data.message, data.status);
+                end_loading("#edit-close-" + id);
+                end_disable("#actions-" + id + ' .button');
             }
-            feedback(data.message, data.status);
-            end_loading("#edit-close-" + id);
-            end_disable("#actions-" + id + ' .button');
-        }
-    );
-}
-</script>
+        );
+    }
+    </script>
 <?php
+    }
+    
+    function tck_add_search_options() {
+        $options = array();
+        $options[0] = 'Random & Custom Keywords';
+        $options[1] = 'Random Keywords';
+        $options[2] = 'Custom Keywords';
+        
+        $default = 0;
+        if ( isset($_GET['custom_filter']) ) $default = $_GET['custom_filter'];
+        
+        $html = yourls_html_select('custom_filter', $options, $default, false);
+        $html = str_replace("\n", '', $html);
+        $html = str_replace("\"", '\\"', $html);
+?>
+    <script language="javascript">
+        $(document).ready(function(){
+            tck_filter = $("#filter_options").find("br")[0];
+            $( tck_filter ).after("Show only <?php echo $html; ?><br />");
+        });
+    </script>
+<?php
+    }
+    
+    function tck_admin_list_where($where) {
+        if ( isset($_GET['custom_filter']) ) {
+            $mode = $_GET['custom_filter'];
+            
+            if ( $mode == 1 ) $where .= ' AND `' . TCK_COLUMN . '` = 0';
+            if ( $mode == 2 ) $where .= ' AND `' . TCK_COLUMN . '` = 1';
+        }
+        
+        return $where;
     }
 ?>
