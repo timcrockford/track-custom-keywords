@@ -267,13 +267,18 @@
         return $return;
     }
         
+    // This function is a duplicate of the usual save function, however adds the custom
+    // flag to the parameters being passed.
     function tck_yourls_ajax_edit_save_custom($args) {
 		yourls_verify_nonce( 'edit-save_'.$_REQUEST['id'], $_REQUEST['nonce'], false, 'omg error' );
         
 		$return = tck_yourls_edit_link( $_REQUEST['url'], $_REQUEST['keyword'], $_REQUEST['newkeyword'], $_REQUEST['title'], $_REQUEST['custom'] );
 		echo json_encode($return);
     }
-        
+    
+    // We override the usual edit link function. Given we need to add an additional check
+    // to determine if the custom flag has been changed, we take advantage of the shunt
+    // option. Most of this code is duplicated from the standard yourls_edit_link function.
     function tck_yourls_edit_link( $url, $keyword, $newkeyword='', $title='', $custom = 0 ) {
         global $ydb;
 
@@ -331,6 +336,9 @@
         return yourls_apply_filter( 'edit_link', $return, $url, $keyword, $newkeyword, $title, $new_url_already_there, $keyword_is_ok );
     }
 
+    // This function adds a new JavaScript block to the base of the page, to be used by the
+    // save routine. It adds in the options to pass the custom flag check back into the
+    // AJAX function.
     function tck_custom_js() {
 ?>
     <script language="javascript">
@@ -376,6 +384,9 @@
 <?php
     }
     
+    // This function creates a block of HTML using the YOURLS add_search_options function
+    // and uses JQuery to add this block back into the DOM. I wasn't able to find a suitable
+    // hook within YOURLS to add this.
     function tck_add_search_options() {
         $options = array();
         $options[0] = 'Random & Custom Keywords';
@@ -398,6 +409,8 @@
 <?php
     }
     
+    // This function expands the where syntax in the query to include the selected filter
+    // for the custom keyword indicator.
     function tck_admin_list_where($where) {
         if ( isset($_GET['custom_filter']) ) {
             $mode = $_GET['custom_filter'];
