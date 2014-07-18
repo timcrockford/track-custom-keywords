@@ -270,11 +270,16 @@
     function tck_yourls_ajax_edit_save_custom($args) {
 		yourls_verify_nonce( 'edit-save_'.$_REQUEST['id'], $_REQUEST['nonce'], false, 'omg error' );
         
-		$return = tck_yourls_edit_link( $_REQUEST['url'], $_REQUEST['keyword'], $_REQUEST['newkeyword'], $_REQUEST['title'], $_REQUEST['custom'] );
+		$return = tck_yourls_edit_link( null, null, $_REQUEST['url'], $_REQUEST['keyword'], $_REQUEST['newkeyword'], $_REQUEST['title'], $_REQUEST['custom'] );
 		echo json_encode($return);
     }
-        
-    function tck_yourls_edit_link( $url, $keyword, $newkeyword='', $title='', $custom = 0 ) {
+    
+    /*
+    The original yourls_edit_link function passes the keyword twice into the function. We only
+    need it once, so we label the first occurance $keywordid and subsequently ignore it in the
+    function.
+    */
+    function tck_yourls_edit_link( $retval, $keywordid, $url, $keyword, $newkeyword='', $title='', $custom = 0 ) {
         global $ydb;
 
         $table = YOURLS_DB_TABLE_URL;
