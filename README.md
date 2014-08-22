@@ -11,3 +11,5 @@ if a keyword was randomly assigned or manually specified.
 - The search bar has an option to only show custom or random keywords
 
 When this plugin is activated, a new column is added to your YOURLS_URL table to hold the flag. If you deactivate the plugin, this column is removed. **Note that your data is lost if you do this.**
+
+See the admin.png file in the repository for an example of the changes to the web UI.
