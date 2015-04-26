@@ -13,8 +13,8 @@
     yourls_add_action( 'activated_track-custom-keywords/plugin.php', 'tck_activate' );
     yourls_add_action( 'deactivated_track-custom-keywords/plugin.php', 'tck_deactivate' );
     yourls_add_action( 'post_add_new_link', 'tck_insert_link' );
-    yourls_add_filter( 'random_keyword', 'tck_add_random' );
-    yourls_add_filter( 'custom_keyword', 'tck_add_custom' );
+    yourls_add_filter( 'random_keyword', 'tck_add_random', 99 );
+    yourls_add_filter( 'custom_keyword', 'tck_add_custom', 99 );
     yourls_add_filter( 'keyword_is_free', 'tck_keyword_is_free' );
     yourls_add_filter( 'add_new_link', 'tck_add_new_link' );
     yourls_add_filter( 'table_add_row_cell_array', 'tck_table_add_row_cell_array' );
